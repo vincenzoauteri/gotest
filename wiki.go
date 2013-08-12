@@ -5,12 +5,33 @@ import (
   "io/ioutil"
   "net/http"
   "html/template"
+  "regexp"
+  "errors"
 )
 const lenPath = len("/view/")
+
+var titleValidator = regexp.MustCompile("^[a-zA-Z0-9]+$")
+
 
 type Page struct {
   Title string
   Body []byte
+}
+
+var templates *template.Template
+
+
+func parseTemplates(templateDir string) {
+  templates = template.Must(template.ParseGlob(templateDir + "*html"))
+}
+
+func getTitle(w http.ResponseWriter, r *http.Request) (title string, err error) {
+  title = r.URL.Path[lenPath:]
+  if !titleValidator.MatchString(title) {
+    http.NotFound(w, r)
+    err = errors.New("Invalid Page Title")
+  }
+  return
 }
 
 func (p *Page) save() error {
@@ -30,13 +51,25 @@ func loadPage(title string) (*Page, error) {
 }
 
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
-  const templateDir = "templates/"
-  t, _ := template.ParseFiles(templateDir + tmpl + ".html")
-  t.Execute(w, p)
+  err := templates.ExecuteTemplate(w, tmpl + ".html", p)
+  if err != nil {
+    http.Error(w, "renderTemplate:" + err.Error(), http.StatusInternalServerError)
+    return
+  }
 }
 
-func viewHandler(w http.ResponseWriter, r *http.Request) {
-  title := r.URL.Path[lenPath:]
+func makeHandler (fn func (http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+  return func(w http.ResponseWriter, r *http.Request) {
+    title := r.URL.Path[lenPath:]
+    if !titleValidator.MatchString(title) {
+      http.NotFound(w, r)
+      return
+    }
+  fn (w, r, title)
+  }
+}
+
+func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
   p, err := loadPage(title)
   if err != nil {
     http.Redirect(w, r, "/edit/"+title, http.StatusFound)
@@ -45,8 +78,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
   renderTemplate(w, "view", p)
 }
 
-func editHandler(w http.ResponseWriter, r *http.Request) {
-  title := r.URL.Path[lenPath:]
+func editHandler(w http.ResponseWriter, r *http.Request, title string ) {
   p, err := loadPage(title)
   if err != nil {
     p = &Page{Title: title}
@@ -54,18 +86,22 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
   renderTemplate(w, "edit", p)
 }
 
-func saveHandler (w http.ResponseWriter, r *http.Request) { 
-  title := r.URL.Path[lenPath:]
+func saveHandler (w http.ResponseWriter, r *http.Request, title string) { 
   body := r.FormValue("body")
   p := &Page{Title: title, Body: []byte(body)}
-  p.save()
+  err := p.save()
+  if err != nil {
+    http.Error(w, "saveHandler:" + err.Error(), http.StatusInternalServerError)
+    return
+  }
   http.Redirect(w,r,"/view/"+title,http.StatusFound)
 }
 
 func main () {
   fmt.Println("Staring Webserver at 8080")
-  http.HandleFunc("/view/",viewHandler)
-  http.HandleFunc("/edit/",editHandler)
-  http.HandleFunc("/save/",saveHandler)
+  parseTemplates("templates/")
+  http.HandleFunc("/view/",makeHandler(viewHandler))
+  http.HandleFunc("/edit/",makeHandler(editHandler))
+  http.HandleFunc("/save/",makeHandler(saveHandler))
   http.ListenAndServe(":8080",nil)
 }

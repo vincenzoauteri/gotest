@@ -5,13 +5,13 @@ import (
   "fmt"
   "time"
   "regexp"
+  "syscall"
 )
 
 var times map[string] int64
 
 func parseDir (f *os.File) bool {
   result  := false
-
   dir, err := f.Readdir(100)
   if err != nil {
     return result
@@ -49,12 +49,19 @@ func parseDir (f *os.File) bool {
   return result
 }
 
-func main() {
+func compileAndStart (appName string)  (*os.Process, error) {
   var procAttr os.ProcAttr
   procAttr.Files = []*os.File{nil, os.Stdout, os.Stderr}
-  args  := []string {"go","run","./wiki.go"}
-  server ,err := os.StartProcess("/usr/local/bin/go",args,&procAttr)
+  args  := []string {"go","build","./" + appName + ".go"}
+  os.StartProcess("/usr/local/bin/go",args,&procAttr)
+  p, err  := os.StartProcess(appName ,nil,&procAttr)
+  return p, err
+}
 
+
+func main() {
+
+  serverPid, err := compileAndStart("wiki")
   if err != nil {
     fmt.Println(err.Error())
   }
@@ -69,8 +76,8 @@ func main() {
     dir,_ := os.Open(".")
     mod := parseDir(dir)
     if mod {
-      _ = server.Kill()
-      server , _ = os.StartProcess("/usr/local/bin/go",args,&procAttr)
+      _ = serverPid.Signal(syscall.SIGKILL)
+      serverPid, err= compileAndStart("wiki")
     }
     time.Sleep(1 * time.Second)
   }
